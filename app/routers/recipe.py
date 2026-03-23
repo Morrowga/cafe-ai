@@ -89,7 +89,11 @@ async def is_coffee_or_mood_related(text: str) -> bool:
             model="gpt-4o-mini",
             messages=[{
                 "role": "user",
-                "content": f"""Is this message related to coffee, mood, feelings, or emotions?
+                "content": f"""Is this message related to any of the following?
+- Coffee, drinks, or café orders (e.g. "make me a latte", "hot coffee please", "no sugar")
+- Mood, feelings, or emotions (e.g. "I'm tired", "feeling stressed", "need energy")
+- Physical states that relate to needing coffee (e.g. "I can't wake up", "long day")
+
 Answer only 'yes' or 'no'. Nothing else.
 Message: "{text}"
 """
