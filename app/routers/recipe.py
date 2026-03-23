@@ -33,16 +33,24 @@ TOPIC_LABELS = [
 
 
 async def is_coffee_or_mood_related(text: str) -> bool:
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            HF_API_URL,
-            headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"},
-            json={
-                "inputs": text,
-                "parameters": {"candidate_labels": TOPIC_LABELS},
-            },
-            timeout=30.0,
-        )
+    for attempt in range(2):  # retry once on timeout
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.post(
+                    HF_API_URL,
+                    headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"},
+                    json={
+                        "inputs": text,
+                        "parameters": {"candidate_labels": TOPIC_LABELS},
+                    },
+                    timeout=60.0,
+                )
+            break
+        except httpx.ReadTimeout:
+            if attempt == 1:
+                logger.warning("HF topic check timed out — allowing through")
+                return True  # allow through if HF keeps timing out
+            continue
 
     if res.status_code != 200:
         logger.warning(f"HF topic check failed {res.status_code}: {res.text}")
@@ -54,8 +62,6 @@ async def is_coffee_or_mood_related(text: str) -> bool:
         logger.warning(f"HF topic check error: {result['error']}")
         return True
 
-    # New router returns list of {"label": ..., "score": ...}
-    # Sort by score descending to get top result
     sorted_result = sorted(result, key=lambda x: x["score"], reverse=True)
     top_label = sorted_result[0]["label"]
     top_score = sorted_result[0]["score"]

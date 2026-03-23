@@ -34,18 +34,24 @@ EMOTION_LABELS = [
 
 
 async def detect_emotions(text: str, top_n: int = 3) -> dict:
-    async with httpx.AsyncClient() as client:
-        res = await client.post(
-            HF_API_URL,
-            headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"},
-            json={
-                "inputs": text,
-                "parameters": {"candidate_labels": EMOTION_LABELS},
-            },
-            timeout=30.0,
-        )
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.post(
+                    HF_API_URL,
+                    headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"},
+                    json={
+                        "inputs": text,
+                        "parameters": {"candidate_labels": EMOTION_LABELS},
+                    },
+                    timeout=60.0,
+                )
+            break
+        except httpx.ReadTimeout:
+            if attempt == 1:
+                raise ValueError("HuggingFace API timed out after 2 attempts")
+            continue
 
-    # Log raw response for debugging
     if res.status_code != 200:
         raise ValueError(f"HF API returned {res.status_code}: {res.text}")
 
@@ -54,15 +60,13 @@ async def detect_emotions(text: str, top_n: int = 3) -> dict:
     if isinstance(result, dict) and result.get("error"):
         raise ValueError(f"HuggingFace API error: {result['error']}")
 
-    # New router returns list of {"label": ..., "score": ...}
     sorted_result = sorted(result, key=lambda x: x["score"], reverse=True)
     top_emotions = {
         item["label"]: item["score"]
         for item in sorted_result[:top_n]
     }
     return top_emotions
-
-
+    
 def format_emotion_summary(emotions: dict) -> str:
     """
     Convert emotion dict to a readable string for the LangChain prompt.
