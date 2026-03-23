@@ -4,7 +4,9 @@ routers/recipe.py
 POST /api/generate-recipe
 
 Pipeline:
-  1. Input validation  — reject nonsense / off-topic text (HF Inference API)
+  1. Input validation
+     - OpenAI Moderation API  → block harmful content
+     - GPT relevance check    → block non-coffee/mood input
   2. Emotion detection — HuggingFace Inference API
   3. Recipe generation — LangChain + GPT (retry up to 3x on bad JSON)
   4. Return structured recipe
@@ -16,34 +18,30 @@ import logging
 import re
 
 from fastapi import APIRouter, HTTPException
+from openai import AsyncOpenAI
 
 from app.models.schemas import RecipeRequest, RecipeResponse
-from app.services.emotion import detect_emotions, HF_API_URL
+from app.services.emotion import detect_emotions
 from app.services.recipe import generate_recipe
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["recipe"])
 
+openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# ── Topic labels ───────────────────────────────────────────────────────────
-TOPIC_LABELS = [
-    "the person is clearly describing a human emotion, feeling, or mental state such as tired, stressed, happy, or anxious",
-    "the person is clearly requesting a specific type of coffee drink with specific preferences like strength, temperature, or ingredients",
-    "the person is typing nonsense, random words, or something completely unrelated to coffee or human emotions",
-]
+
+# ── Layer 1: Quick gibberish check (free, instant) ─────────────────────────
 
 def is_meaningful_text(text: str) -> bool:
     """
-    Quick pre-check before calling HuggingFace.
-    Rejects obvious gibberish, repeated characters, too short, etc.
+    Rejects obvious gibberish before wasting any API calls.
     """
     text = text.strip()
 
-    # Too short
     if len(text) < 3:
         return False
 
-    # Only repeated characters like "hehehehe", "aaaaaaa", "lololol"
+    # Repeated character patterns like "hehehehe", "aaaaaaa"
     if re.match(r'^(.{1,3})\1{3,}$', text, re.IGNORECASE):
         return False
 
@@ -51,50 +49,63 @@ def is_meaningful_text(text: str) -> bool:
     if re.match(r'^[\d\W]+$', text):
         return False
 
-    # Less than 2 unique words
-    words = text.lower().split()
-    if len(set(words)) < 2 and len(words) < 3:
-        return False
-
     return True
 
+
+# ── Layer 2: OpenAI Moderation API (harmful content) ──────────────────────
+
+async def is_safe_content(text: str) -> bool:
+    """
+    Use OpenAI Moderation API to detect harmful content.
+    Free to use — no extra cost on top of your OpenAI account.
+    """
+    try:
+        response = await openai_client.moderations.create(input=text)
+        flagged = response.results[0].flagged
+        if flagged:
+            logger.info(f"Moderation flagged: '{text[:40]}'")
+        return not flagged
+    except Exception as e:
+        logger.warning(f"Moderation API error: {e} — allowing through")
+        return True  # allow through if moderation API fails
+
+
+# ── Layer 3: GPT relevance check (coffee/mood related?) ───────────────────
+
 async def is_coffee_or_mood_related(text: str) -> bool:
-    for attempt in range(2):  # retry once on timeout
-        try:
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    HF_API_URL,
-                    headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"},
-                    json={
-                        "inputs": text,
-                        "parameters": {"candidate_labels": TOPIC_LABELS},
-                    },
-                    timeout=60.0,
-                )
-            break
-        except httpx.ReadTimeout:
-            if attempt == 1:
-                logger.warning("HF topic check timed out — allowing through")
-                return True  # allow through if HF keeps timing out
-            continue
+    """
+    Use GPT to determine if input is related to coffee or mood.
+    GPT understands intent — not just keywords.
 
-    if res.status_code != 200:
-        logger.warning(f"HF topic check failed {res.status_code}: {res.text}")
+    Examples:
+      "give me a knife"   → no  → blocked
+      "I'm exhausted"     → yes → allowed
+      "no sugar please"   → yes → allowed
+      "give me a sword"   → no  → blocked
+      "I need a weapon"   → no  → blocked
+    """
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": f"""Is this message related to coffee, mood, feelings, or emotions?
+Answer only 'yes' or 'no'. Nothing else.
+Message: "{text}"
+"""
+            }],
+            max_tokens=5,
+            temperature=0,
+        )
+        answer = response.choices[0].message.content.strip().lower()
+        logger.info(f"Relevance check: '{text[:40]}' → {answer}")
+        return answer == "yes"
+    except Exception as e:
+        logger.warning(f"Relevance check error: {e} — allowing through")
         return True
 
-    result = res.json()
 
-    if isinstance(result, dict) and result.get("error"):
-        logger.warning(f"HF topic check error: {result['error']}")
-        return True
-
-    sorted_result = sorted(result, key=lambda x: x["score"], reverse=True)
-    top_label = sorted_result[0]["label"]
-    top_score = sorted_result[0]["score"]
-
-    logger.info(f"Topic check → label: '{top_label[:40]}' score: {top_score:.2f}")
-    return top_label != TOPIC_LABELS[2] and top_score > 0.60
-
+# ── Main endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/generate-recipe", response_model=RecipeResponse)
 async def create_recipe(request: RecipeRequest):
@@ -102,27 +113,35 @@ async def create_recipe(request: RecipeRequest):
     Generate a personalized coffee recipe from mood input.
     """
 
-    # ── Step 1: Validate input ─────────────────────────────────────────────
+    # ── Step 1a: Empty input check ─────────────────────────────────────────
     if not request.text.strip() and not request.tags:
         raise HTTPException(
             status_code=422,
             detail="Please tell me how you're feeling or select a mood tag. ☕"
         )
 
-    # Pre-check for gibberish — before wasting an HF API call
-    if request.text.strip() and not is_meaningful_text(request.text):
-        raise HTTPException(
-            status_code=422,
-            detail="I can only make coffee, that's all. ☕"
-        )
+    if request.text.strip():
 
-    # HuggingFace topic check
-    if request.text.strip() and not await is_coffee_or_mood_related(request.text):
-        raise HTTPException(
-            status_code=422,
-            detail="I can only make coffee, that's all. ☕"
-        )
+        # ── Step 1b: Gibberish check (instant, free) ───────────────────────
+        if not is_meaningful_text(request.text):
+            raise HTTPException(
+                status_code=422,
+                detail="I can only make coffee, that's all. ☕"
+            )
 
+        # ── Step 1c: Harmful content check (OpenAI Moderation) ────────────
+        if not await is_safe_content(request.text):
+            raise HTTPException(
+                status_code=422,
+                detail="I can only make coffee, that's all. ☕"
+            )
+
+        # ── Step 1d: Relevance check (GPT) ────────────────────────────────
+        if not await is_coffee_or_mood_related(request.text):
+            raise HTTPException(
+                status_code=422,
+                detail="I can only make coffee, that's all. ☕"
+            )
 
     logger.info(f"Recipe request: text='{request.text[:50]}' tags={request.tags}")
 
@@ -145,7 +164,7 @@ async def create_recipe(request: RecipeRequest):
                 detected_emotions=detected_emotions,
                 mood_tags=request.tags,
             )
-            break  # success — exit retry loop
+            break
         except ValueError as e:
             last_error = e
             logger.warning(f"Attempt {attempt + 1}/3 bad JSON: {e}")
