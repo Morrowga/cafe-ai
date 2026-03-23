@@ -14,7 +14,7 @@ import os
 import httpx
 
 # ── HuggingFace Inference API ──────────────────────────────────────────────
-HF_API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
+HF_API_URL = "https://router.huggingface.co/models/facebook/bart-large-mnli"
 
 # ── Emotion labels CaféAI understands ─────────────────────────────────────
 EMOTION_LABELS = [
