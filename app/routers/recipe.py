@@ -46,13 +46,18 @@ async def is_coffee_or_mood_related(text: str) -> bool:
 
     if res.status_code != 200:
         logger.warning(f"HF topic check failed {res.status_code}: {res.text}")
-        return True  # allow through if HF is down
+        return True
 
     result = res.json()
+    logger.info(f"HF raw response: {result}")  # ← add this to see structure
 
     if isinstance(result, dict) and result.get("error"):
         logger.warning(f"HF topic check error: {result['error']}")
         return True
+
+    # New router returns a list — handle both list and dict
+    if isinstance(result, list):
+        result = result[0]  # ← unwrap list
 
     top_label = result["labels"][0]
     top_score = result["scores"][0]

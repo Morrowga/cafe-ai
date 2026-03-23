@@ -51,6 +51,9 @@ async def detect_emotions(text: str, top_n: int = 3) -> dict:
 
     result = res.json()
 
+    if isinstance(result, list):
+        result = result[0]  # ← unwrap list
+
     if isinstance(result, dict) and result.get("error"):
         raise ValueError(f"HuggingFace API error: {result['error']}")
 
