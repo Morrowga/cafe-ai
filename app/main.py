@@ -52,7 +52,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",   # Next.js dev
         "http://localhost:5173",   # Vite dev
-        "https://cafeai.vercel.app",  # production (update with your domain)
+        "https://thihaeung.vercel.app",
+        "https://thihaeung.com",
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
