@@ -14,6 +14,11 @@ How it works:
   - These feed into LangChain as structured context for the recipe prompt
 """
 
+import os
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 from transformers import pipeline
 from functools import lru_cache
 
