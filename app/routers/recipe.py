@@ -13,6 +13,7 @@ Pipeline:
 import os
 import httpx
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException
 
@@ -31,6 +32,31 @@ TOPIC_LABELS = [
     "the person is typing nonsense, random words, or something completely unrelated to coffee or human emotions",
 ]
 
+def is_meaningful_text(text: str) -> bool:
+    """
+    Quick pre-check before calling HuggingFace.
+    Rejects obvious gibberish, repeated characters, too short, etc.
+    """
+    text = text.strip()
+
+    # Too short
+    if len(text) < 3:
+        return False
+
+    # Only repeated characters like "hehehehe", "aaaaaaa", "lololol"
+    if re.match(r'^(.{1,3})\1{3,}$', text, re.IGNORECASE):
+        return False
+
+    # Only numbers or special characters
+    if re.match(r'^[\d\W]+$', text):
+        return False
+
+    # Less than 2 unique words
+    words = text.lower().split()
+    if len(set(words)) < 2 and len(words) < 3:
+        return False
+
+    return True
 
 async def is_coffee_or_mood_related(text: str) -> bool:
     for attempt in range(2):  # retry once on timeout
@@ -83,11 +109,20 @@ async def create_recipe(request: RecipeRequest):
             detail="Please tell me how you're feeling or select a mood tag. ☕"
         )
 
+    # Pre-check for gibberish — before wasting an HF API call
+    if request.text.strip() and not is_meaningful_text(request.text):
+        raise HTTPException(
+            status_code=422,
+            detail="I can only make coffee, that's all. ☕"
+        )
+
+    # HuggingFace topic check
     if request.text.strip() and not await is_coffee_or_mood_related(request.text):
         raise HTTPException(
             status_code=422,
             detail="I can only make coffee, that's all. ☕"
         )
+
 
     logger.info(f"Recipe request: text='{request.text[:50]}' tags={request.tags}")
 
