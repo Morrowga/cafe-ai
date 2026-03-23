@@ -51,15 +51,15 @@ async def detect_emotions(text: str, top_n: int = 3) -> dict:
 
     result = res.json()
 
-    if isinstance(result, list):
-        result = result[0]  # ← unwrap list
-
     if isinstance(result, dict) and result.get("error"):
         raise ValueError(f"HuggingFace API error: {result['error']}")
 
-    top_emotions = dict(
-        zip(result["labels"][:top_n], result["scores"][:top_n])
-    )
+    # New router returns list of {"label": ..., "score": ...}
+    sorted_result = sorted(result, key=lambda x: x["score"], reverse=True)
+    top_emotions = {
+        item["label"]: item["score"]
+        for item in sorted_result[:top_n]
+    }
     return top_emotions
 
 

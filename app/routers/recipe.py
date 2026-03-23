@@ -49,18 +49,17 @@ async def is_coffee_or_mood_related(text: str) -> bool:
         return True
 
     result = res.json()
-    logger.info(f"HF raw response: {result}")  # ← add this to see structure
 
     if isinstance(result, dict) and result.get("error"):
         logger.warning(f"HF topic check error: {result['error']}")
         return True
 
-    # New router returns a list — handle both list and dict
-    if isinstance(result, list):
-        result = result[0]  # ← unwrap list
+    # New router returns list of {"label": ..., "score": ...}
+    # Sort by score descending to get top result
+    sorted_result = sorted(result, key=lambda x: x["score"], reverse=True)
+    top_label = sorted_result[0]["label"]
+    top_score = sorted_result[0]["score"]
 
-    top_label = result["labels"][0]
-    top_score = result["scores"][0]
     logger.info(f"Topic check → label: '{top_label[:40]}' score: {top_score:.2f}")
     return top_label != TOPIC_LABELS[2] and top_score > 0.55
 
