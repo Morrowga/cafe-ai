@@ -33,10 +33,6 @@ TOPIC_LABELS = [
 
 
 async def is_coffee_or_mood_related(text: str) -> bool:
-    """
-    Use HuggingFace Inference API to check if input is coffee/mood related.
-    Returns True if allowed, False if should be blocked.
-    """
     async with httpx.AsyncClient() as client:
         res = await client.post(
             HF_API_URL,
@@ -47,18 +43,20 @@ async def is_coffee_or_mood_related(text: str) -> bool:
             },
             timeout=30.0,
         )
-        result = res.json()
+
+    if res.status_code != 200:
+        logger.warning(f"HF topic check failed {res.status_code}: {res.text}")
+        return True  # allow through if HF is down
+
+    result = res.json()
 
     if isinstance(result, dict) and result.get("error"):
-        # If HF API has an error, allow through and let emotion detection handle it
         logger.warning(f"HF topic check error: {result['error']}")
         return True
 
     top_label = result["labels"][0]
     top_score = result["scores"][0]
-
     logger.info(f"Topic check → label: '{top_label[:40]}' score: {top_score:.2f}")
-
     return top_label != TOPIC_LABELS[2] and top_score > 0.55
 
 

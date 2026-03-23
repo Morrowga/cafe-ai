@@ -14,7 +14,7 @@ import os
 import httpx
 
 # ── HuggingFace Inference API ──────────────────────────────────────────────
-HF_API_URL = "https://router.huggingface.co/models/facebook/bart-large-mnli"
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
 
 # ── Emotion labels CaféAI understands ─────────────────────────────────────
 EMOTION_LABELS = [
@@ -34,17 +34,6 @@ EMOTION_LABELS = [
 
 
 async def detect_emotions(text: str, top_n: int = 3) -> dict:
-    """
-    Run zero-shot classification via HuggingFace Inference API.
-
-    Args:
-        text  : User's free-form mood description
-        top_n : How many top emotions to return (default 3)
-
-    Returns:
-        dict of { emotion: confidence_score }
-        e.g. { "tired": 0.91, "stressed": 0.78, "cozy": 0.42 }
-    """
     async with httpx.AsyncClient() as client:
         res = await client.post(
             HF_API_URL,
@@ -55,9 +44,13 @@ async def detect_emotions(text: str, top_n: int = 3) -> dict:
             },
             timeout=30.0,
         )
-        result = res.json()
 
-    # Handle model loading state — HF sometimes returns 503 while warming up
+    # Log raw response for debugging
+    if res.status_code != 200:
+        raise ValueError(f"HF API returned {res.status_code}: {res.text}")
+
+    result = res.json()
+
     if isinstance(result, dict) and result.get("error"):
         raise ValueError(f"HuggingFace API error: {result['error']}")
 
