@@ -26,9 +26,9 @@ router = APIRouter(prefix="/api", tags=["recipe"])
 
 # ── Topic labels ───────────────────────────────────────────────────────────
 TOPIC_LABELS = [
-    "the person is describing their mood, feeling, or emotion and wants a coffee recommendation",
-    "the person is making a specific coffee request or describing coffee preferences",
-    "the person is asking for something completely unrelated to coffee, mood, or feelings",
+    "the person is clearly describing a human emotion, feeling, or mental state such as tired, stressed, happy, or anxious",
+    "the person is clearly requesting a specific type of coffee drink with specific preferences like strength, temperature, or ingredients",
+    "the person is typing nonsense, random words, or something completely unrelated to coffee or human emotions",
 ]
 
 
