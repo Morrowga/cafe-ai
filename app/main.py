@@ -54,6 +54,7 @@ app.add_middleware(
         "http://localhost:5173",   # Vite dev
         "https://thihaeung.vercel.app",
         "https://thihaeung.com",
+        "https://www.thihaeung.com",
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
