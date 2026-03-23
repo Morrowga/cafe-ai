@@ -67,7 +67,7 @@ async def is_coffee_or_mood_related(text: str) -> bool:
     top_score = sorted_result[0]["score"]
 
     logger.info(f"Topic check → label: '{top_label[:40]}' score: {top_score:.2f}")
-    return top_label != TOPIC_LABELS[2] and top_score > 0.55
+    return top_label != TOPIC_LABELS[2] and top_score > 0.60
 
 
 @router.post("/generate-recipe", response_model=RecipeResponse)
