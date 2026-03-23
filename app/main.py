@@ -26,14 +26,8 @@ logger = logging.getLogger(__name__)
 # ── Lifespan: warm up HF model on startup ─────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Pre-load the HuggingFace model when the server starts.
-    This avoids a cold-start delay on the first request.
-    """
-    logger.info("☕ CaféAI starting up — loading HuggingFace model...")
-    from app.services.emotion import get_classifier
-    get_classifier()   # triggers lru_cache → model loads once
-    logger.info("✅ Model ready. Server is hot.")
+    logger.info("☕ CaféAI starting up...")
+    logger.info("✅ Server is hot.")
     yield
     logger.info("CaféAI shutting down.")
 
@@ -69,6 +63,6 @@ app.include_router(recipe_router)
 def root():
     return {
         "status": "ok",
-        "hf_model": "facebook/bart-large-mnli",
-        "llm_model": "claude-sonnet-4-5",
+        "hf_model": "facebook/bart-large-mnli (Inference API)",
+        "llm_model": "gpt-4o-mini",
     }
