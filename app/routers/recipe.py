@@ -4,52 +4,56 @@ routers/recipe.py
 POST /api/generate-recipe
 
 Pipeline:
-  1. Input validation  — reject nonsense / off-topic text
-  2. Emotion detection — HuggingFace zero-shot classification
+  1. Input validation  — reject nonsense / off-topic text (HF Inference API)
+  2. Emotion detection — HuggingFace Inference API
   3. Recipe generation — LangChain + GPT (retry up to 3x on bad JSON)
   4. Return structured recipe
 """
 
-from fastapi import APIRouter, HTTPException
+import os
+import httpx
 import logging
 
+from fastapi import APIRouter, HTTPException
+
 from app.models.schemas import RecipeRequest, RecipeResponse
-from app.services.emotion import detect_emotions, get_classifier
+from app.services.emotion import detect_emotions, HF_API_URL
 from app.services.recipe import generate_recipe
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["recipe"])
 
 
-# ── Input validation ───────────────────────────────────────────────────────
-#
-# Two-label zero-shot classification.
-# Descriptive natural language labels work better than single keywords
-# because bart-large-mnli was trained on natural language inference.
-#
-# We ALSO require the coffee/mood label to win WITH confidence > 0.55.
-# This double check prevents edge cases where both labels score ~0.5.
-#
+# ── Topic labels ───────────────────────────────────────────────────────────
 TOPIC_LABELS = [
     "the person is describing their mood, feeling, or emotion and wants a coffee recommendation",
-    "the person is making a specific coffee request or describing coffee preferences",  
+    "the person is making a specific coffee request or describing coffee preferences",
     "the person is asking for something completely unrelated to coffee, mood, or feelings",
 ]
 
-def is_coffee_or_mood_related(text: str) -> bool:
-    """
-    Returns True only if:
-      - The coffee/mood label wins AND
-      - Its confidence score is above 0.55
 
-    Examples:
-      "I'm exhausted after meetings"  → True  (mood label wins: ~0.94)
-      "give me a knife"               → False (unrelated wins: ~0.91)
-      "give me the panties"           → False (unrelated wins: ~0.97)
-      "I need something strong today" → True  (mood label wins: ~0.81)
-      "give me the hot one"           → False (unrelated wins: ~0.72)
+async def is_coffee_or_mood_related(text: str) -> bool:
     """
-    result = get_classifier()(text, candidate_labels=TOPIC_LABELS)
+    Use HuggingFace Inference API to check if input is coffee/mood related.
+    Returns True if allowed, False if should be blocked.
+    """
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            HF_API_URL,
+            headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN')}"},
+            json={
+                "inputs": text,
+                "parameters": {"candidate_labels": TOPIC_LABELS},
+            },
+            timeout=30.0,
+        )
+        result = res.json()
+
+    if isinstance(result, dict) and result.get("error"):
+        # If HF API has an error, allow through and let emotion detection handle it
+        logger.warning(f"HF topic check error: {result['error']}")
+        return True
+
     top_label = result["labels"][0]
     top_score = result["scores"][0]
 
@@ -71,7 +75,7 @@ async def create_recipe(request: RecipeRequest):
             detail="Please tell me how you're feeling or select a mood tag. ☕"
         )
 
-    if request.text.strip() and not is_coffee_or_mood_related(request.text):
+    if request.text.strip() and not await is_coffee_or_mood_related(request.text):
         raise HTTPException(
             status_code=422,
             detail="I can only make coffee, that's all. ☕"
@@ -81,7 +85,7 @@ async def create_recipe(request: RecipeRequest):
 
     # ── Step 2: HuggingFace emotion detection ──────────────────────────────
     try:
-        detected_emotions = detect_emotions(request.text)
+        detected_emotions = await detect_emotions(request.text)
         logger.info(f"Detected emotions: {detected_emotions}")
     except Exception as e:
         logger.error(f"HuggingFace error: {e}")
@@ -100,12 +104,10 @@ async def create_recipe(request: RecipeRequest):
             )
             break  # success — exit retry loop
         except ValueError as e:
-            # LLM returned malformed JSON — worth retrying
             last_error = e
             logger.warning(f"Attempt {attempt + 1}/3 bad JSON: {e}")
             continue
         except Exception as e:
-            # Hard error (API key, network) — no point retrying
             logger.error(f"LLM hard error: {e}")
             raise HTTPException(status_code=500, detail="Recipe generation failed")
 
